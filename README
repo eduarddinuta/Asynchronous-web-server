@@ -1,0 +1,42 @@
+Dinuta Eduard-Stefan 321CA
+Tema 3 SO - Server web asincron
+
+   Tema implementeaza un server web cu o functionalitate limitata a
+protocolului HTTP, transmiterea de fisiere. Serverul foloseste
+operatii asincrone pe fisiere, operatii non-blocante pe socketi,
+zero-copying si multiplexarea operatiilor I/O folosind API-ul epoll
+din scheletul temei.
+   Serverul va astepta la infinit pentru aparitia unui eveniment.
+La primirea unui request, sunt alocate structurile necesare unei noi
+conexiuni, se citesc datele de pe socket si requestul este parsat
+folosing parserul HTTP inclus in scheletul temei. Este construit
+apoi path-ul fisierului cerut si vor exista 3 cazuri:
+- cazul 0: path-ul este invalid si fisierul nu a putut fii deschis,
+caz in care este trimis doar un header cu eroarea 404, iar conexiunea
+se inchide
+- cazul 1: fisierul cerut se afla in directorul static. Este trimis
+headerul cu raspunsul 200 OK, iar apoi se trimite fisierul folosind
+zero-copying cu functia sendfile.
+- cazul 2: fisierul cerut se afla in directorul dynamic. Pentru inceput
+este trimis acelasi header cu raspunsul 200 OK. Fiserele din folderul 
+dynamic vor fii citite de pe disc folosind I/O asincron din familia io_setup,
+fiind impartite in mai multe buffere. Se initializeaza structurile iocb si 
+piocb necesare operatiilor aio, cat sii structura eventfd pentru asteptarea 
+operatiilor. Apoi sunt intializate operatiile de citire si contextul 
+operatiilor si se incepe citirea folosind io_submit, si se asteapta 
+evenimentele. Deoarece io_submit nu porneste mereu toate operatiile, procesul
+se repeta pana la citirea intregului fisier. In final se trimite fiecare 
+segemnt al fisierului folosind functia send pe socketi non-blocanti.
+   La final, indiferent de caz, se elibereaza memoria tuturor structurilor
+folosite si se inchide conexiunea si fisierul trimis.
+   Pe langa cele 3 cazuri, fiecare conexiune are mai multe stari pentru a
+asigura citirea si scrierea in intregime a fisierelor. Programul trece intr-o
+alta etapa doar la schimbarea starii conexiunii. La inceput la primirea
+eventului EPOLLIN este realizata constructia unei noi conexiuni, apoi este
+citit requestul, conexiunea trecand in starea STATE_READING_HEADER pana la
+incheierea citirii. Urmeaza starea STATE_DATA_RECEIVED ce duce la trimiterea
+raspunsului si trecerea in starea STATE_SENDING_HEADER. Dupa trimiterea
+headerului conexiunea trece in starea STATE_HEADER_SENT, care permite
+inceperea transferului fisierului si trecerea in starea STATE_SENDING_FILE.
+In final, dupa ce fisierul a fost trimis, conexiunea trece in starea
+STATE_FILE_SENT, dupa care este inchisa
